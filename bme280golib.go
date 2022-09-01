@@ -8,19 +8,24 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	"syscall"
+	"strings"
+	"time"
+)
+
+const (
+	ID_EXPECTED = 0x60
 )
 
 const (
 	// Register
-	REGISTER_ID        = 0xD0
-	REGISTER_RESET     = 0xE0
-	REGISTER_CTRL_HUM  = 0xF2
-	REGISTER_STATUS    = 0xF3 //Bit0=update bit3=measuring
-	REGISTER_CTRL_MEAS = 0xF4
-	REGISTER_CONFIG    = 0xF5
+	REGISTER_ID        byte = 0xD0
+	REGISTER_RESET     byte = 0xE0
+	REGISTER_CTRL_HUM  byte = 0xF2
+	REGISTER_STATUS    byte = 0xF3 //Bit0=update bit3=measuring
+	REGISTER_CTRL_MEAS byte = 0xF4
+	REGISTER_CONFIG    byte = 0xF5
 
-	REGISTER_DATA = 0xF7
+	REGISTER_DATA byte = 0xF7
 	/*
 		REGISTER_PRESS_MSB  = 0xF7 //RawMeas
 		REGISTER_PRESS_LSB  = 0xF8
@@ -32,85 +37,92 @@ const (
 		REGISTER_HUM_LSB    = 0xFE
 	*/
 
-	REGISTER_CALIB00 = 0x88
-	REGISTER_CALIB26 = 0xE1
+	REGISTER_CALIB00 byte = 0x88
+	REGISTER_CALIB26 byte = 0xE1
 )
+
+// BME280Device inteface, for faking sensor if needed
+type BME280Device interface {
+	Close() error
+	Configure(config BME280Config) error
+	Read() (HumTempPressureMeas, error)
+	SoftReset() error
+}
 
 type BME280 struct {
-	I2CHandle *os.File //Set this at startup
-	Calib1    CalibrationRegs1
-	Calib2    CalibrationRegs2
-	Address   byte
+	i2cHandle *os.File //Set this at startup
+	//TODO SPI version? But I do not have SPI breakout board available
+
+	Calib   CalibrationRegs
+	address byte
 }
 
-type HumTempPressureMeas struct {
-	Temperature float64
-	Rh          float64
-	Pressure    float64
+//CalibrationRegs is combined from CalibrationRegs1 and CalibrationRegs2. For simpler operation
+type CalibrationRegs struct {
+	T1 uint16
+	T2 int16
+	T3 int16
+
+	P1 uint16
+	P2 int16
+	P3 int16
+	P4 int16
+	P5 int16
+	P6 int16
+	P7 int16
+	P8 int16
+	P9 int16
+
+	H1 uint8 //Extra points do not matter?
+	H2 int16
+	H3 uint8
+	H4 int16 //Mixed up
+	H5 int16 //Mixed up
+	H6 int8  //Mixed up
 }
 
-type RawMeas struct {
-	Pmsb  byte
-	Plsb  byte
-	Pxlsb byte
+func CombineCalibrations(c1 CalibrationRegs1, c2 CalibrationRegs2) CalibrationRegs {
+	return CalibrationRegs{
+		T1: c1.T1,
+		T2: c1.T2,
+		T3: c1.T3,
 
-	Tmsb  byte
-	Tlsb  byte
-	Txlsb byte
+		P1: c1.P1,
+		P2: c1.P2,
+		P3: c1.P3,
+		P4: c1.P4,
+		P5: c1.P5,
+		P6: c1.P6,
+		P7: c1.P7,
+		P8: c1.P8,
+		P9: c1.P9,
 
-	Hmsb byte
-	Hlsb byte
+		H1: c2.H1,
+		H2: c2.H2,
+		H3: c2.H3,
+		H4: c2.H4,
+		H5: c2.H5,
+		H6: c2.H6,
+	}
 }
 
-const (
-	OVRSAMPLE_NO = 0
-	OVRSAMPLE_1  = 1
-	OVRSAMPLE_2  = 2
-	OVRSAMPLE_4  = 3
-	OVRSAMPLE_16 = 4
-)
+//ToTable for printout
+func (a CalibrationRegs) ToTable() string {
+	var sb strings.Builder
+	sb.WriteString("Reg\tPressure\tHumidity\tTemperature\n")
+	sb.WriteString(fmt.Sprintf("1\t%v\t%v\t%v\n2\t%v\t%v\t%v\n3\t%v\t%v\t%v\n",
+		a.P1, a.H1, a.T1,
+		a.P2, a.H2, a.T2,
+		a.P3, a.H3, a.T3,
+	))
+	sb.WriteString(fmt.Sprintf("4\t%v\t%v\t\n5\t%v\t%v\t\n6\t%v\t%v\t\n",
+		a.P4, a.H4,
+		a.P5, a.H5,
+		a.P6, a.H6))
 
-type Oversample byte
-
-const (
-	MODE_SLEEP  = 0
-	MODE_FORCED = 1
-	MODE_NORMAL = 3
-)
-
-type DeviceMode byte
-
-const (
-	STANDBYDURATION_0_5  = 0
-	STANDBYDURATION_62_5 = 1
-	STANDBYDURATION_125  = 2
-	STANDBYDURATION_250  = 3
-	STANDBYDURATION_500  = 4
-	STANDBYDURATION_1000 = 5
-	STANDBYDURATION_10   = 6
-	STANDBYDURATION_20   = 7
-)
-
-type StandbyDurationSetting byte
-
-const (
-	FILTER_NO = 0
-	FILTER_2  = 1
-	FILTER_4  = 2
-	FILTER_8  = 3
-	FILTER_16 = 4
-)
-
-type FilterSetting byte
-
-type BME280Config struct {
-	Oversample_humidity    Oversample //Oversample //Common for all?
-	Oversample_pressure    Oversample //Common for all?
-	Oversample_temperature Oversample //Common for all?
-	Mode                   DeviceMode
-	Standby                StandbyDurationSetting
-	Filter                 FilterSetting
-	//Forced mode?
+	sb.WriteString(fmt.Sprintf("7\t%v\t\t\n8\t%v\t\t\n9\t%v\t\t\n",
+		a.P7, a.P8, a.P9))
+	return sb.String()
 }
 
 //In same order as on I2c memory  24bytes
@@ -140,133 +152,124 @@ type CalibrationRegs2 struct {
 	H6 int8  //Mixed up
 }
 
-func selectI2CSlave(f *os.File, address byte) error {
-	//i2c_SLAVE := 0x0703
-	_, _, errorcode := syscall.Syscall6(syscall.SYS_IOCTL, f.Fd(), 0x0703, uintptr(address), 0, 0, 0)
-	if errorcode != 0 {
-		return fmt.Errorf("Select I2C slave errcode %v", errorcode)
-	}
-	return nil
-}
-
-func (p *BME280) WriteReg(address byte, value byte) error {
-	err := selectI2CSlave(p.I2CHandle, p.Address)
-	if err != nil {
-		return err
-	}
-	_, err = p.I2CHandle.Write([]byte{address, value})
-	return err
-}
-
-func (p *BME280) ReadRegs(address byte, count byte) ([]byte, error) {
-	selectErr := selectI2CSlave(p.I2CHandle, p.Address)
-	result := make([]byte, count)
-	if selectErr != nil {
-		return result, selectErr
-	}
-
-	_, err := p.I2CHandle.Write([]byte{address})
-	if err != nil {
-		return result, err
-	}
-	_, err = p.I2CHandle.Read(result)
-	return result, err
-}
-
 /*
 Gets open i2c device file (this allows to share same open device file with other i2c devices)
 Check ID
 read calibration
+
+TODO IMPLEMENT SPI support when such hardware is available/need
 */
-func (p *BME280) Initialize(f *os.File, i2cAddressBit bool) error {
+func InitBME280I2C(f *os.File, i2cAddressBit bool) (BME280, error) {
+	result := BME280{address: 0x76, i2cHandle: f}
 	if i2cAddressBit {
-		p.Address = 0x77
-	} else {
-		p.Address = 0x76
+		result.address = 0x77
+	}
+	errInit := result.init()
+	if errInit != nil {
+		return BME280{}, errInit
+	}
+	return result, nil
+}
+
+//Common initialization for I2C and SPI
+func (p *BME280) init() error {
+	//Check ID
+	idArr, idErrRead := p.readRegs(REGISTER_ID, 1)
+	if idErrRead != nil {
+		return fmt.Errorf("Id check read error %v\n", idErrRead.Error())
 	}
 
-	p.I2CHandle = f
-	arr, err := p.ReadRegs(REGISTER_CALIB00, 24)
-	if err != nil {
-		return err
+	if idArr[0] != ID_EXPECTED {
+		return fmt.Errorf("Invalid BME280 id=0x%02X expected 0x%02X", idArr[0], ID_EXPECTED)
 	}
-	err = binary.Read(bytes.NewReader(arr), binary.LittleEndian, &p.Calib1)
-	if err != nil {
-		return err
+
+	var calibErr error
+	p.Calib, calibErr = p.readCalibration()
+	if calibErr != nil {
+		return fmt.Errorf("Reading calibration failed %v", calibErr.Error())
 	}
-	arr, err = p.ReadRegs(REGISTER_CALIB26, 8)
-	if err != nil {
-		return err
-	}
-	//fmt.Printf("Calib 26 arr = %#v\n", arr)
-	p.Calib2.H2 = int16(arr[0]) | int16(arr[1])<<8
-	p.Calib2.H3 = arr[2]
-	p.Calib2.H4 = int16(arr[3])<<4 | int16(arr[4]&0x0F)
-	p.Calib2.H5 = int16(arr[5])<<4 | int16(arr[4]&0xF0)>>4
-	p.Calib2.H6 = int8(arr[6])
-	arr, err = p.ReadRegs(0xA1, 1)
-	if err != nil {
-		return err
-	}
-	p.Calib2.H1 = arr[0]
+	//TODO: calibration sanity check? no zeros or ones only
 	return nil
 }
 
+//readCalibration reads calibration once, for that reason this is private
+func (p *BME280) readCalibration() (CalibrationRegs, error) {
+	var calib1 CalibrationRegs1
+	var calib2 CalibrationRegs2
+
+	arr, err := p.readRegs(REGISTER_CALIB00, 24)
+	if err != nil {
+		return CalibrationRegs{}, err
+	}
+	err = binary.Read(bytes.NewReader(arr), binary.LittleEndian, &calib1)
+	if err != nil {
+		return CalibrationRegs{}, err
+	}
+	arr, err = p.readRegs(REGISTER_CALIB26, 8)
+	if err != nil {
+		return CalibrationRegs{}, err
+	}
+	//fmt.Printf("Calib 26 arr = %#v\n", arr)
+	calib2.H2 = int16(arr[0]) | int16(arr[1])<<8
+	calib2.H3 = arr[2]
+	calib2.H4 = int16(arr[3])<<4 | int16(arr[4]&0x0F)
+	calib2.H5 = int16(arr[5])<<4 | int16(arr[4]&0xF0)>>4
+	calib2.H6 = int8(arr[6])
+	arr, err = p.readRegs(0xA1, 1)
+	if err != nil {
+		return CalibrationRegs{}, err
+	}
+	calib2.H1 = arr[0]
+	return CombineCalibrations(calib1, calib2), nil
+}
+
+func (p *BME280) Close() error {
+	return p.i2cHandle.Close()
+}
+
 func (p *BME280) Configure(config BME280Config) error {
-	err := p.WriteReg(REGISTER_CTRL_HUM, byte(config.Oversample_humidity))
+	err := p.writeReg(REGISTER_CTRL_HUM, byte(config.Oversample_humidity))
 	if err != nil {
 		return err
 	}
-	err = p.WriteReg(REGISTER_CTRL_MEAS, byte((byte(config.Oversample_temperature)<<5)|(byte(config.Oversample_pressure)<<2)|3)|byte(config.Mode)) //TODO FORCED? or normal?
+
+	ctrlByte := byte(config.Oversample_temperature)<<5 | byte(config.Oversample_pressure)<<2 | byte(config.Mode)
+	fmt.Printf("ctrlbyte is %v\n", ctrlByte)
+	err = p.writeReg(REGISTER_CTRL_MEAS, ctrlByte) //TODO FORCED? or normal?
 	if err != nil {
 		return err
 	}
 	//Minimal inactivity, no filter =0. More inactivity, less self heating
-	return p.WriteReg(REGISTER_CONFIG, ((byte(config.Standby)&0x7)<<4)|((byte(config.Filter)&0x7)<<1))
+	return p.writeReg(REGISTER_CONFIG, ((byte(config.Standby)&0x7)<<4)|((byte(config.Filter)&0x7)<<1))
 }
 
-/*
-Reads all results
-*/
-func (p *BME280) BME280Read() (HumTempPressureMeas, error) {
-	var result HumTempPressureMeas
-
-	raw, err := p.ReadRegs(REGISTER_DATA, 8)
+//does soft reset, for glitch etc.... after that re-write configuration
+func (p *BME280) SoftReset() error {
+	err := p.writeReg(REGISTER_RESET, 0xB6)
 	if err != nil {
-		return result, err
+		return err
 	}
-	traw := uint32(raw[3])<<12 | uint32(raw[4])<<4 | uint32(raw[5])>>4
-	praw := uint32(raw[0])<<12 | uint32(raw[1])<<4 | uint32(raw[2])>>4
-	hraw := uint32(raw[6])<<8 | uint32(raw[7])
+	time.Sleep(2 * time.Millisecond)
+	return nil
+}
 
-	var v1, v2 float64
-	var tfine int32
-
-	v1 = (float64(traw)/16384.0 - float64(p.Calib1.T1)/1024.0) * float64(p.Calib1.T2)
-	v2 = (float64(traw)/131072.0 - float64(p.Calib1.T1)/8192.0) * (float64(traw)/131072.0 - float64(p.Calib1.T1)/8192.0) * float64(p.Calib1.T3)
-	tfine = int32(v1 + v2)
-	result.Temperature = (v1 + v2) / 5120.0
-
-	//----------------
-	v1 = float64(tfine)/2.0 - 64000.0
-	v2 = v1 * v1 * (float64(p.Calib1.P6) / 32768.0)
-	v2 = v2 + v1*(float64(p.Calib1.P5)*2.0)
-	v2 = v2/4.0 + (float64(p.Calib1.P4) * 65536.0)
-	v1 = (float64(p.Calib1.P3)*v1*v1/524288.0 + float64(p.Calib1.P2)*v1) / 524288.0
-	v1 = (1.0 + v1/32768.0) * float64(p.Calib1.P1)
-
-	if v1 == 0 {
-		result.Pressure = 0
-	} else {
-		result.Pressure = 1048576.0 - float64(praw)
-		result.Pressure = (result.Pressure - v2/4096.0) * 6250.0 / v1
-		v1 = float64(p.Calib1.P9) * result.Pressure * result.Pressure / 2147483648.0
-		v2 = result.Pressure * float64(p.Calib1.P8) / 32768.0
-		result.Pressure = result.Pressure + (v1+v2+float64(p.Calib1.P7))/16.0
+//BME280ReadRaw gives non-compensated readout not really used expect some debugging, testing or research purposes. Use Read
+func (p *BME280) ReadRaw() (RawMeas, error) {
+	raw, err := p.readRegs(REGISTER_DATA, 8)
+	if err != nil {
+		return RawMeas{}, err
 	}
-	//---------------------------
-	result.Rh = float64(tfine) - 76800.0
-	result.Rh = (float64(hraw) - float64(p.Calib2.H4)*64.0 + float64(p.Calib2.H5)/16384.0*result.Rh) * float64(p.Calib2.H2) / 65536.0 * (1.0 + float64(p.Calib2.H6)/67108864.0*result.Rh*(1.0+float64(p.Calib2.H3)/67108864.0*result.Rh))
-	result.Rh = result.Rh * (1.0 - float64(p.Calib2.H1)*result.Rh/524288.0)
-	return result, nil
+	return RawMeas{
+		Temperature: uint32(raw[3])<<12 | uint32(raw[4])<<4 | uint32(raw[5])>>4,
+		Pressure:    uint32(raw[0])<<12 | uint32(raw[1])<<4 | uint32(raw[2])>>4,
+		Humidity:    uint16(raw[6])<<8 | uint16(raw[7])}, nil
+}
+
+//BME280Read() Reads all results and do internal compensation This is how usually this is used
+func (p *BME280) Read() (HumTempPressureMeas, error) {
+	raw, rawErr := p.ReadRaw()
+	if rawErr != nil {
+		return HumTempPressureMeas{}, rawErr
+	}
+	return raw.Compensate(p.Calib)
 }
