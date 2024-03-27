@@ -77,19 +77,19 @@ Standby duration
 type StandbyDurationSetting byte
 
 const (
-	STANDBYDURATION_0_5  StandbyDurationSetting = 0
-	STANDBYDURATION_62_5 StandbyDurationSetting = 1
-	STANDBYDURATION_125  StandbyDurationSetting = 2
-	STANDBYDURATION_250  StandbyDurationSetting = 3
-	STANDBYDURATION_500  StandbyDurationSetting = 4
-	STANDBYDURATION_1000 StandbyDurationSetting = 5
-	STANDBYDURATION_10   StandbyDurationSetting = 6
-	STANDBYDURATION_20   StandbyDurationSetting = 7
+	STANDBYDURATION_0_5  StandbyDurationSetting = 0 // 0.5ms
+	STANDBYDURATION_62_5 StandbyDurationSetting = 1 // 62.5ms
+	STANDBYDURATION_125  StandbyDurationSetting = 2 // 125ms
+	STANDBYDURATION_250  StandbyDurationSetting = 3 // 250ms
+	STANDBYDURATION_500  StandbyDurationSetting = 4 // 500ms
+	STANDBYDURATION_1000 StandbyDurationSetting = 5 // 1s
+	STANDBYDURATION_10   StandbyDurationSetting = 6 // 10ms
+	STANDBYDURATION_20   StandbyDurationSetting = 7 // 20ms
 )
 
 var standbyDurOptionMicroseconds = []int{500, 62500, 125000, 250000, 500000, 1000000, 10000, 20000}
 
-//GetStandbyDuration picks neareste setting
+// GetStandbyDuration picks neareste setting
 func GetStandbyDuration(dur time.Duration) StandbyDurationSetting { //Get nearest setting
 
 	result := int(0)
@@ -111,25 +111,9 @@ func GetStandbyDuration(dur time.Duration) StandbyDurationSetting { //Get neares
 		}
 	}
 	return StandbyDurationSetting(result)
-
-	/*	for i, micros := range standbyDurOptionMicroseconds {
-			d := int(dur.Microseconds())
-			if d <= micros {
-				if i == 0 {
-					return StandbyDurationSetting(0)
-				}
-				prev := standbyDurOptionMicroseconds[i-1]
-				if (d - prev) < (micros - d) {
-					return StandbyDurationSetting(i - 1)
-				}
-				return StandbyDurationSetting(i)
-			}
-		}
-		return StandbyDurationSetting(len(standbyDurOptionMicroseconds) - 1)
-	*/
 }
 
-//Duration how much in between reads. samplerate=1/(standbyduration+readTimes) in normal mode
+// Duration how much in between reads. samplerate=1/(standbyduration+readTimes) in normal mode
 func (a StandbyDurationSetting) Duration() time.Duration {
 	if STANDBYDURATION_20 < a {
 		return time.Duration(0) //INVALID
@@ -193,7 +177,7 @@ func (a BME280Config) String() string {
 		a.Mode, a.Filter, a.Standby, a.Oversample_humidity, a.Oversample_pressure, a.Oversample_temperature)
 }
 
-//GotError check is there bad configuration
+// GotError check is there bad configuration
 func (p *BME280Config) GotError() error {
 	if 7 < p.Oversample_humidity {
 		return fmt.Errorf("humidity oversample over 3bits")

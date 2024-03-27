@@ -2,25 +2,8 @@ package BME280golib
 
 import "math"
 
-//RawMeas is what registers have, needs calibration (stored on chip) for creating correct readout HumTempPressureMeas
+// RawMeas is what registers have, needs calibration (stored on chip) for creating correct readout HumTempPressureMeas
 type RawMeas struct {
-	/*
-		Pmsb  byte
-		Plsb  byte
-		Pxlsb byte
-
-		Tmsb  byte
-		Tlsb  byte
-		Txlsb byte
-
-		Hmsb byte
-		Hlsb byte
-
-		traw := uint32(raw[3])<<12 | uint32(raw[4])<<4 | uint32(raw[5])>>4
-		praw := uint32(raw[0])<<12 | uint32(raw[1])<<4 | uint32(raw[2])>>4
-		hraw := uint32(raw[6])<<8 | uint32(raw[7])
-	*/
-
 	Temperature uint32 //24bit
 	Pressure    uint32 //24bit
 	Humidity    uint16 //16bit
@@ -32,7 +15,7 @@ type HumTempPressureMeas struct {
 	Pressure    float64
 }
 
-//Compensate, with by datasheet. 8.1 Compensation formulas in double precision floating point
+// Compensate, with by datasheet. 8.1 Compensation formulas in double precision floating point
 func (p *RawMeas) Compensate(calib CalibrationRegs) (HumTempPressureMeas, error) {
 	var v1, v2 float64
 	var tfine int32
@@ -93,7 +76,7 @@ Resolution 0.0008 -> 12500
 
 */
 
-//Maximum limits for sanity checking
+// Maximum limits for sanity checking
 const (
 	PRESSURE_MIN float64 = 30000
 	PRESSURE_MAX float64 = 110000
@@ -105,7 +88,7 @@ const (
 	HUMIDITY_MAX float64 = 100
 )
 
-//Makes infs to results if out of measurement range. Some people do not agree this.
+// Makes infs to results if out of measurement range. Some people do not agree this.
 func (p *HumTempPressureMeas) DoInfs() {
 	if p.Pressure < PRESSURE_MIN {
 		p.Pressure = math.Inf(-1)
